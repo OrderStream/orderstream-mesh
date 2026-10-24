@@ -288,10 +288,12 @@ class ZeroDowntimeMigrationGuard:
     """
     @staticmethod
     def validate_backward_compatibility(table_name: str, dropped_columns: List[str], active_queries: List[str]) -> Dict[str, any]:
+        import re
         unsafe_drops = []
         for col in dropped_columns:
+            pattern = re.compile(rf"\b{re.escape(col)}\b", re.IGNORECASE)
             for q in active_queries:
-                if col in q:
+                if pattern.search(q):
                     unsafe_drops.append({"column": col, "breaking_query": q})
 
         safe = len(unsafe_drops) == 0

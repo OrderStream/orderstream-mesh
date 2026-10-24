@@ -102,6 +102,12 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertFalse(res_col["passed"])
         self.assertEqual(res_col["collision_count"], 1)
 
+        # Mixed separator cross-platform collision
+        paths_mixed = ["src/Config.go", "src\\config.go"]
+        res_mixed = UnicodeCaseFoldingGate.inspect_tree_collision(paths_mixed)
+        self.assertFalse(res_mixed["passed"])
+        self.assertEqual(res_mixed["collision_count"], 1)
+
     def test_05_loose_object_pack_compressor(self):
         comp = LooseObjectPackCompressor()
         comp.add_object("sha_blob1", b"fn main() { println!(\"Hello Monorepo\"); }")
@@ -124,6 +130,14 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         res_exceeded = gov.calculate_depth_and_verify("sha_d4")
         self.assertFalse(res_exceeded["valid"])
 
+        # Cyclic delta verification
+        gov_cyclic = DeltaChainDepthGovernor(max_depth=10)
+        gov_cyclic.record_delta("sha_c1", "sha_c2")
+        gov_cyclic.record_delta("sha_c2", "sha_c1")
+        res_cycle = gov_cyclic.calculate_depth_and_verify("sha_c1")
+        self.assertFalse(res_cycle["valid"])
+        self.assertIn("Cyclic", res_cycle["error"])
+
     def test_07_reflog_pruning_compactor(self):
         comp = ReflogPruningCompactor(default_ttl_seconds=100)
         comp.record_reflog("HEAD", "sha1", "sha2", timestamp=1000, message="commit 1")
@@ -141,6 +155,12 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertEqual(cached, entries)
         self.assertIsNone(cache.get_tree("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
 
+        # Non-hex and short mock sha robust lookup
+        cache.put_tree("mock_tree_node", entries)
+        self.assertEqual(cache.get_tree("mock_tree_node"), entries)
+        cache.put_tree("t1", entries)
+        self.assertEqual(cache.get_tree("t1"), entries)
+
     def test_09_atomic_symlink_sanitizer(self):
         safe_res = AtomicSymlinkSanitizer.sanitize_symlink("link1", "src/util.rs")
         self.assertTrue(safe_res["safe"])
@@ -150,6 +170,14 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
 
         git_res = AtomicSymlinkSanitizer.sanitize_symlink("link3", ".git/hooks/pre-commit")
         self.assertFalse(git_res["safe"])
+
+        # Legitimate intra-repo relative symlink from nested directory
+        nested_safe = AtomicSymlinkSanitizer.sanitize_symlink("src/utils/helper.rs", "../common/helper.rs")
+        self.assertTrue(nested_safe["safe"])
+
+        # Escaping traversal from nested directory
+        nested_escape = AtomicSymlinkSanitizer.sanitize_symlink("src/utils/helper.rs", "../../../etc/shadow")
+        self.assertFalse(nested_escape["safe"])
 
     def test_10_alternates_object_pool(self):
         pool = AlternatesObjectPool("corp_pool")
@@ -239,6 +267,11 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         bad_res = enforcer.evaluate_imports("frontend/src/Secret.tsx", ["internal_db_models/User"])
         self.assertFalse(bad_res["allowed"])
         self.assertEqual(bad_res["violations_count"], 1)
+
+        # Ensure no false positive substring matches on unrelated packages
+        enforcer.add_boundary_rule("ui/", "db")
+        fp_res = enforcer.evaluate_imports("ui/src/App.tsx", ["imdb", "sandbag"])
+        self.assertTrue(fp_res["allowed"])
 
     def test_18_virtual_monorepo_linker(self):
         linker = VirtualMonorepoLinker()
@@ -333,6 +366,13 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertEqual(count, 1)
         self.assertNotIn("ghp_", sanitized)
         self.assertIn("[REDACTED_SECRET_BLOCKED]", sanitized)
+
+        # OpenAI project key redaction
+        openai_log = "API_KEY=sk-proj-abc1234567890def1234567890abcdef1234567890abcdef"
+        sanitized_ai, count_ai = ActionSecretLeakFirewall.sanitize_log_chunk(openai_log)
+        self.assertEqual(count_ai, 1)
+        self.assertNotIn("sk-proj-", sanitized_ai)
+        self.assertIn("[REDACTED_SECRET_BLOCKED]", sanitized_ai)
 
     def test_27_step_timeout_predictor(self):
         pred = StepTimeoutPredictor(historical_p95_seconds=30.0, multiplier_threshold=3.0)
@@ -508,8 +548,30 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertTrue(guard.lock_resources("PR-11", ["aws_s3_bucket.data"])["acquired"])
 
     def test_46_k8s_manifest_semantic_diff(self):
-        live = {"kind": "Deployment", "metadata": {"name": "app", "resourceVersion": "99999"}, "spec": {"replicas": 3}}
-        git = {"kind": "Deployment", "metadata": {"name": "app"}, "spec": {"replicas": 3}}
+        live = {
+            "kind": "Deployment",
+            "metadata": {"name": "app", "resourceVersion": "99999"},
+            "spec": {
+                "replicas": 3,
+                "template": {
+                    "spec": {
+                        "containers": [{"name": "app", "creationTimestamp": "2026-01-01"}]
+                    }
+                }
+            }
+        }
+        git = {
+            "kind": "Deployment",
+            "metadata": {"name": "app"},
+            "spec": {
+                "replicas": 3,
+                "template": {
+                    "spec": {
+                        "containers": [{"name": "app"}]
+                    }
+                }
+            }
+        }
         diff = K8sManifestSemanticDiff.diff_manifests(live, git)
         self.assertFalse(diff["has_semantic_drift"])
         self.assertEqual(diff["action"], "NOOP_IDLE")
@@ -663,14 +725,21 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
 
     def test_66_agent_permission_sandbox(self):
         self.assertFalse(AgentPermissionSandbox.evaluate_command("rm -rf /")["permitted"])
+        self.assertFalse(AgentPermissionSandbox.evaluate_command("rm -r -f /var")["permitted"])
         self.assertTrue(AgentPermissionSandbox.evaluate_command("cargo test")["permitted"])
         self.assertFalse(AgentPermissionSandbox.evaluate_file_write(".github/workflows/ci.yml")["permitted"])
+        self.assertFalse(AgentPermissionSandbox.evaluate_file_write("credentials")["permitted"])
+        self.assertFalse(AgentPermissionSandbox.evaluate_file_write("./.env")["permitted"])
 
     def test_67_context_window_optimizer(self):
         code = "# Comment\n\nfn hello() {\n    // Print\n    println!(\"hi\");\n}"
         res = ContextWindowOptimizer.prune_comments_and_blank_lines(code)
         self.assertNotIn("# Comment", res["pruned_code"])
         self.assertTrue(res["bytes_saved_ratio"] > 0.0)
+
+        # Empty string handling
+        res_empty = ContextWindowOptimizer.prune_comments_and_blank_lines("")
+        self.assertEqual(res_empty["bytes_saved_ratio"], 0.0)
 
     def test_68_hallucinated_api_firewall(self):
         fw = HallucinatedAPIFirewall()
@@ -725,6 +794,15 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         res_overflow = ArithmeticOverflowGate.verify_multiplication(1 << 62, 4, bits=64)
         self.assertFalse(res_overflow["safe"])
 
+        # Signed negative multiplication test
+        res_signed = ArithmeticOverflowGate.verify_multiplication(-5, 2, bits=128)
+        self.assertTrue(res_signed["safe"])
+        self.assertEqual(res_signed["result"], -10)
+
+        # 32-bit overflow test
+        res_32 = ArithmeticOverflowGate.verify_multiplication(1 << 30, 8, bits=32)
+        self.assertFalse(res_32["safe"])
+
     def test_75_oracle_freshness_verifier(self):
         verifier = OracleFreshnessVerifier(max_staleness_seconds=60, max_deviation_pct=2.0)
         res = verifier.verify_oracles(100.0, 101.0, timestamp=1000, current_time=1020)
@@ -738,6 +816,11 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertTrue(val.validate_open_path("/app/data.json", "r")["allowed"])
         self.assertFalse(val.validate_open_path("/etc/shadow", "r")["allowed"])
 
+        # Directory traversal escape attempt
+        self.assertFalse(val.validate_open_path("/tmp/../etc/shadow", "r")["allowed"])
+        # Directory prefix collision attack
+        self.assertFalse(val.validate_open_path("/tmp_fake/secret.txt", "r")["allowed"])
+
     def test_77_tail_call_eliminator(self):
         res = TailCallEliminator.synthesize_trampoline_wrapper("recursive_ast_walk")
         self.assertTrue(res["transformed"])
@@ -749,6 +832,12 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         res = ContractUpgradeSafetyChecker.compare_layouts(v1, v2_bad)
         self.assertFalse(res["safe"])
         self.assertEqual(res["verdict"], "UPGRADE_CORRUPTS_STORAGE_LAYOUT")
+
+        # Slot hijacking test
+        v2_hijack = {"admin": 0}
+        res_hijack = ContractUpgradeSafetyChecker.compare_layouts({"owner": 0}, v2_hijack)
+        self.assertFalse(res_hijack["safe"])
+        self.assertIn("usurped", res_hijack["collisions"][0]["error"])
 
     def test_79_multisig_timelock_coordinator(self):
         coord = MultisigTimelockCoordinator(timelock_seconds=100)
@@ -774,6 +863,13 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertIn("task_A", cycles[0])
         self.assertIn("task_B", cycles[0])
 
+        # Self-dependency deadlock detection
+        tracer_self = PolySyncDeadlockTracer()
+        tracer_self.add_dependency("task_Solo", "task_Solo")
+        cycles_self = tracer_self.find_deadlock_cycles()
+        self.assertEqual(len(cycles_self), 1)
+        self.assertIn("task_Solo", cycles_self[0])
+
     def test_82_protobuf_wire_format_oracle(self):
         v1 = {1: {"name": "id", "type": "int64"}}
         v2_breaking = {1: {"name": "id", "type": "string"}}
@@ -781,9 +877,23 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertFalse(res["compatible"])
         self.assertEqual(res["verdict"], "BREAKING_WIRE_CHANGE_REJECTED")
 
+        # Field renaming on same tag
+        v2_rename = {1: {"name": "account_id", "type": "int64"}}
+        res_rename = ProtobufWireFormatOracle.verify_schema_evolution(v1, v2_rename)
+        self.assertFalse(res_rename["compatible"])
+
+        # Tag renumbering
+        v2_renumber = {2: {"name": "id", "type": "int64"}}
+        res_renumber = ProtobufWireFormatOracle.verify_schema_evolution(v1, v2_renumber)
+        self.assertFalse(res_renumber["compatible"])
+
     def test_83_schema_lock_preflight_simulator(self):
         res_safe = SchemaLockPreflightSimulator.evaluate_ddl("CREATE INDEX CONCURRENTLY idx_users ON users(id)")
         self.assertFalse(res_safe["blocks_reads"])
+
+        # Formatted multi-space DDL statement
+        res_multispace = SchemaLockPreflightSimulator.evaluate_ddl("CREATE   INDEX   CONCURRENTLY   idx_users2 ON users(id)")
+        self.assertFalse(res_multispace["blocks_reads"])
 
         res_danger = SchemaLockPreflightSimulator.evaluate_ddl("DROP TABLE old_records")
         self.assertTrue(res_danger["blocks_reads"])
@@ -810,6 +920,11 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         self.assertTrue(drift["drift_detected"])
         self.assertEqual(drift["violations_count"], 1)
 
+        # Boolean in integer field
+        drift_bool = APIContractDriftSentry.validate_payload_schema({"user_id": True}, {"user_id": int})
+        self.assertTrue(drift_bool["drift_detected"])
+        self.assertIn("bool", drift_bool["violations"][0]["error"])
+
     def test_87_distributed_idempotency_validator(self):
         val = DistributedIdempotencyValidator()
         res1 = val.process_transaction("idemp_100", "{\"amount\": 50}", lambda: {"status": "SUCCESS", "id": 1})
@@ -818,6 +933,13 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         res2 = val.process_transaction("idemp_100", "{\"amount\": 50}", lambda: {"status": "SUCCESS", "id": 2})
         self.assertEqual(res2["status"], "DEDUPLICATED_CACHED_RESPONSE")
         self.assertEqual(res2["response"]["id"], 1)
+
+        # JSON key order permutation deduplication
+        res3 = val.process_transaction("idemp_200", "{\"a\": 1, \"b\": 2}", lambda: {"status": "SUCCESS", "tx": 10})
+        self.assertEqual(res3["status"], "EXECUTED_FRESH")
+        res4 = val.process_transaction("idemp_200", "{\"b\": 2, \"a\": 1}", lambda: {"status": "SUCCESS", "tx": 20})
+        self.assertEqual(res4["status"], "DEDUPLICATED_CACHED_RESPONSE")
+        self.assertEqual(res4["response"]["tx"], 10)
 
     def test_88_event_loop_lag_blame_hunter(self):
         hunter = EventLoopLagBlameHunter(latency_threshold_ms=10.0)
@@ -916,6 +1038,12 @@ class TestOrderStreamMesh100Solvers(unittest.TestCase):
         res = ZeroDowntimeMigrationGuard.validate_backward_compatibility("users", ["legacy_token"], active_queries)
         self.assertFalse(res["backward_compatible"])
         self.assertEqual(res["verdict"], "REJECT_DESTRUCTIVE_COLUMN_DROP")
+
+        # Ensure no false positive substring match on user_identity / user_id when dropping 'id'
+        safe_queries = ["SELECT user_identity, user_id FROM accounts WHERE status = 'active'"]
+        res_safe = ZeroDowntimeMigrationGuard.validate_backward_compatibility("accounts", ["id"], safe_queries)
+        self.assertTrue(res_safe["backward_compatible"])
+        self.assertEqual(res_safe["verdict"], "SAFE_ROLLOUT")
 
 
 if __name__ == "__main__":

@@ -210,16 +210,18 @@ class K8sManifestSemanticDiff:
     RUNTIME_FIELDS = {"creationTimestamp", "resourceVersion", "managedFields", "generation", "uid", "status"}
 
     @classmethod
-    def clean_manifest(cls, manifest: Dict[str, any]) -> Dict[str, any]:
-        cleaned = {}
-        for k, v in manifest.items():
-            if k in cls.RUNTIME_FIELDS:
-                continue
-            if isinstance(v, dict):
+    def clean_manifest(cls, manifest: any) -> any:
+        if isinstance(manifest, dict):
+            cleaned = {}
+            for k, v in manifest.items():
+                if k in cls.RUNTIME_FIELDS:
+                    continue
                 cleaned[k] = cls.clean_manifest(v)
-            else:
-                cleaned[k] = v
-        return cleaned
+            return cleaned
+        elif isinstance(manifest, list):
+            return [cls.clean_manifest(elem) for elem in manifest]
+        else:
+            return manifest
 
     @classmethod
     def diff_manifests(cls, live_manifest: Dict[str, any], git_manifest: Dict[str, any]) -> Dict[str, any]:

@@ -211,16 +211,24 @@ class AgentPermissionSandbox:
 
     @classmethod
     def evaluate_command(cls, command_str: str) -> Dict[str, any]:
+        norm_cmd = re.sub(r"\s+", " ", command_str.strip())
         for bad in cls.FORBIDDEN_COMMANDS:
-            if bad in command_str:
+            if bad in norm_cmd or (bad == "rm -rf" and re.search(r"\brm\s+(?:-[a-zA-Z]*r[a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*r|-[a-zA-Z]*r\s+-[a-zA-Z]*f)\b", command_str)):
                 return {"permitted": False, "reason": f"Dangerous destructive command detected: {bad}"}
         return {"permitted": True}
 
     @classmethod
     def evaluate_file_write(cls, target_file_path: str) -> Dict[str, any]:
-        norm = target_file_path.replace("\\", "/")
+        import os.path
+        norm = os.path.normpath(target_file_path.replace("\\", "/")).replace("\\", "/")
+        clean_target = norm.lstrip("./")
         for protected in cls.PROTECTED_DIRECTORIES:
-            if norm.startswith(protected) or f"/{protected}" in norm:
+            prot_clean = protected.strip("/")
+            if (clean_target == prot_clean or
+                clean_target.startswith(f"{prot_clean}/") or
+                f"/{prot_clean}/" in f"/{clean_target}/" or
+                norm.startswith(protected) or
+                f"/{protected}" in norm):
                 return {"permitted": False, "reason": f"Access to sensitive infrastructure file path denied: {protected}"}
         return {"permitted": True}
 
@@ -235,15 +243,22 @@ class ContextWindowOptimizer:
     """
     @staticmethod
     def prune_comments_and_blank_lines(source_code: str) -> Dict[str, any]:
+        if not source_code:
+            return {
+                "pruned_code": "",
+                "original_length": 0,
+                "pruned_length": 0,
+                "bytes_saved_ratio": 0.0
+            }
         lines = source_code.splitlines()
         pruned = []
         for line in lines:
             stripped = line.strip()
-            if not stripped or stripped.startswith("#") or stripped.startswith("//"):
+            if not stripped or stripped.startswith("#") or stripped.startswith("//") or stripped.startswith("*"):
                 continue
             pruned.append(line)
         result_text = "\n".join(pruned)
-        saving_ratio = round(1.0 - (len(result_text) / (len(source_code) or 1)), 2)
+        saving_ratio = max(0.0, round(1.0 - (len(result_text) / len(source_code)), 2))
         return {
             "pruned_code": result_text,
             "original_length": len(source_code),

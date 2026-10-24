@@ -137,10 +137,24 @@ class ArithmeticOverflowGate:
     MIN_I128 = -(1 << 127)
 
     @classmethod
-    def verify_multiplication(cls, a: int, b: int, bits: int = 64) -> Dict[str, any]:
+    def verify_multiplication(cls, a: int, b: int, bits: int = 64, signed: Optional[bool] = None) -> Dict[str, any]:
         result = a * b
-        limit = cls.MAX_U64 if bits == 64 else cls.MAX_I128
-        overflowed = result > limit or result < 0
+        is_signed = signed if signed is not None else (a < 0 or b < 0 or bits == 128)
+
+        if bits == 32:
+            min_val = -(1 << 31) if is_signed else 0
+            max_val = (1 << 31) - 1 if is_signed else (1 << 32) - 1
+        elif bits == 64:
+            min_val = -(1 << 63) if is_signed else 0
+            max_val = (1 << 63) - 1 if is_signed else cls.MAX_U64
+        elif bits == 128:
+            min_val = cls.MIN_I128 if is_signed else 0
+            max_val = cls.MAX_I128 if is_signed else (1 << 128) - 1
+        else:
+            min_val = -(1 << (bits - 1)) if is_signed else 0
+            max_val = (1 << (bits - 1)) - 1 if is_signed else (1 << bits) - 1
+
+        overflowed = not (min_val <= result <= max_val)
         return {
             "a": a,
             "b": b,
@@ -194,8 +208,17 @@ class WasiCapabilityBoundaryValidator:
         self.preopened_dirs = set(preopened_dirs or ["/sandbox", "/tmp"])
 
     def validate_open_path(self, requested_path: str, flags: str) -> Dict[str, any]:
+        import os.path
         norm = requested_path.replace("\\", "/").strip()
-        allowed = any(norm.startswith(p) for p in self.preopened_dirs)
+        resolved = os.path.normpath(norm).replace("\\", "/")
+
+        allowed = False
+        for p in self.preopened_dirs:
+            p_clean = os.path.normpath(p.replace("\\", "/").strip()).replace("\\", "/")
+            if resolved == p_clean or resolved.startswith(p_clean.rstrip("/") + "/"):
+                allowed = True
+                break
+
         return {
             "path": requested_path,
             "allowed": allowed,
@@ -239,6 +262,17 @@ class ContractUpgradeSafetyChecker:
                     "old_slot": slot,
                     "new_slot": v2_slots[var_name],
                     "error": "Storage slot index reassigned"
+                })
+
+        # Check slot hijacking / reuse
+        v1_slot_to_var = {slot: var for var, slot in v1_slots.items()}
+        for var_name, slot in v2_slots.items():
+            if slot in v1_slot_to_var and v1_slot_to_var[slot] != var_name:
+                collisions.append({
+                    "variable": var_name,
+                    "old_variable": v1_slot_to_var[slot],
+                    "slot": slot,
+                    "error": f"Slot {slot} previously held '{v1_slot_to_var[slot]}', usurped by '{var_name}'"
                 })
 
         safe = len(collisions) == 0

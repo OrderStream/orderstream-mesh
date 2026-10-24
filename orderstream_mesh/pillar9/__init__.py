@@ -69,7 +69,7 @@ class PolySyncDeadlockTracer:
                     scc.append(w)
                     if w == node:
                         break
-                if len(scc) > 1:
+                if len(scc) > 1 or (len(scc) == 1 and node in self.wait_for.get(node, set())):
                     sccs.append(scc)
 
         for node in list(self.wait_for.keys()):
@@ -93,6 +93,8 @@ class ProtobufWireFormatOracle:
         v2_fields: Dict[int, Dict[str, str]]
     ) -> Dict[str, any]:
         violations = []
+        v2_name_to_tag = {f["name"]: tag for tag, f in v2_fields.items()}
+
         for tag, f1 in v1_fields.items():
             if tag not in v2_fields:
                 violations.append({
@@ -108,6 +110,19 @@ class ProtobufWireFormatOracle:
                         "field": f1["name"],
                         "error": f"Wire type mutated from {f1['type']} to {f2['type']}"
                     })
+                if f1["name"] != f2["name"]:
+                    violations.append({
+                        "tag": tag,
+                        "field": f1["name"],
+                        "error": f"Field name mutated on tag {tag} from '{f1['name']}' to '{f2['name']}'"
+                    })
+
+            if f1["name"] in v2_name_to_tag and v2_name_to_tag[f1["name"]] != tag:
+                violations.append({
+                    "tag": tag,
+                    "field": f1["name"],
+                    "error": f"Field '{f1['name']}' tag renumbered from {tag} to {v2_name_to_tag[f1['name']]}"
+                })
 
         compatible = len(violations) == 0
         return {
@@ -136,7 +151,8 @@ class SchemaLockPreflightSimulator:
 
     @classmethod
     def evaluate_ddl(cls, ddl_statement: str) -> Dict[str, any]:
-        upper = ddl_statement.upper().strip().replace(" ", "_")
+        import re
+        upper = re.sub(r"\s+", "_", ddl_statement.upper().strip())
         lock = "ACCESS_EXCLUSIVE" # conservative default
         for op, mode in cls.LOCK_MODES:
             if op in upper:
@@ -221,11 +237,18 @@ class APIContractDriftSentry:
         for field, expected_t in expected_types.items():
             if field not in payload:
                 violations.append({"field": field, "error": "Missing required field"})
-            elif not isinstance(payload[field], expected_t):
-                violations.append({
-                    "field": field,
-                    "error": f"Type mismatch: expected {expected_t.__name__}, got {type(payload[field]).__name__}"
-                })
+            else:
+                val = payload[field]
+                if expected_t is int and isinstance(val, bool):
+                    violations.append({
+                        "field": field,
+                        "error": "Type mismatch: expected int, got bool"
+                    })
+                elif not isinstance(val, expected_t):
+                    violations.append({
+                        "field": field,
+                        "error": f"Type mismatch: expected {expected_t.__name__}, got {type(val).__name__}"
+                    })
 
         safe = len(violations) == 0
         return {
@@ -247,7 +270,13 @@ class DistributedIdempotencyValidator:
         self.seen_keys: Dict[str, Dict[str, any]] = {} # key -> {"hash": str, "response": any}
 
     def process_transaction(self, idempotency_key: str, request_payload: str, executor_fn) -> Dict[str, any]:
-        payload_hash = hashlib.sha256(request_payload.encode()).hexdigest()
+        try:
+            parsed = json.loads(request_payload)
+            canonical = json.dumps(parsed, sort_keys=True)
+        except Exception:
+            canonical = request_payload
+
+        payload_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
         if idempotency_key in self.seen_keys:
             record = self.seen_keys[idempotency_key]

@@ -275,11 +275,16 @@ class MonorepoBoundaryEnforcer:
         self.forbidden_rules.append((source_pkg, forbidden_target_pkg))
 
     def evaluate_imports(self, source_file: str, imported_modules: List[str]) -> Dict[str, any]:
+        import re
+        norm_source = source_file.replace("\\", "/")
         violations = []
         for src_rule, target_rule in self.forbidden_rules:
-            if src_rule in source_file:
+            src_clean = src_rule.replace("\\", "/")
+            if src_clean in norm_source:
+                target_pat = re.compile(rf"(?:^|[/._-]){re.escape(target_rule.strip('/'))}(?:[/._-]|$)", re.IGNORECASE)
                 for imp in imported_modules:
-                    if target_rule in imp:
+                    imp_clean = imp.replace("\\", "/")
+                    if target_pat.search(imp_clean) or target_rule in imp_clean.split("/"):
                         violations.append({
                             "source_file": source_file,
                             "imported": imp,

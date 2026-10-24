@@ -240,7 +240,7 @@ class ActionSecretLeakFirewall:
         re.compile(r"ghp_[a-zA-Z0-9]{36}"),
         re.compile(r"gho_[a-zA-Z0-9]{36}"),
         re.compile(r"AKIA[0-9A-Z]{16}"),
-        re.compile(r"sk-[a-zA-Z0-9]{48}"),
+        re.compile(r"sk-(?:proj-)?[a-zA-Z0-9_\-]{32,}"),
         re.compile(r"bearer\s+[a-zA-Z0-9_\-\.]{20,}", re.IGNORECASE)
     ]
 

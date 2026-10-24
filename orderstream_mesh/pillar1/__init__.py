@@ -198,8 +198,9 @@ class UnicodeCaseFoldingGate:
     """
     @staticmethod
     def normalize_casefold(path: str) -> str:
-        """Applies Unicode NFKC normalization followed by case-folding."""
-        return unicodedata.normalize("NFKC", path).casefold()
+        """Applies path separator normalization, Unicode NFKC normalization followed by case-folding."""
+        clean = path.replace("\\", "/").strip()
+        return unicodedata.normalize("NFKC", clean).casefold()
 
     @classmethod
     def inspect_tree_collision(cls, file_paths: List[str]) -> Dict[str, any]:
@@ -383,7 +384,8 @@ class ShardedTreeCacheEngine:
         self.shard_access: List[Dict[str, float]] = [{} for _ in range(shards)]
 
     def _get_shard(self, tree_sha: str) -> int:
-        return int(tree_sha[:4], 16) % self.num_shards
+        h = hashlib.md5(str(tree_sha).encode("utf-8")).hexdigest()
+        return int(h[:4], 16) % self.num_shards
 
     def put_tree(self, tree_sha: str, tree_entries: List[Dict[str, str]]):
         shard_idx = self._get_shard(tree_sha)
@@ -416,10 +418,12 @@ class AtomicSymlinkSanitizer:
     Mitigates CVE-2024-32002 class vulnerabilities by ensuring symlinks cannot point
     outside repository roots or alias nested git directories (.git/hooks).
     """
-    DANGEROUS_TARGETS = [".git", ".git/hooks", ".git/config", "..", "/etc/passwd"]
+    DANGEROUS_TARGETS = [".git", ".git/hooks", ".git/config", "etc/passwd", "etc/shadow"]
 
     @classmethod
     def sanitize_symlink(cls, link_path: str, target_dest: str) -> Dict[str, any]:
+        import os.path
+
         # Normalize slashes
         norm_dest = target_dest.replace("\\", "/").strip()
         norm_link = link_path.replace("\\", "/").strip()
@@ -433,25 +437,21 @@ class AtomicSymlinkSanitizer:
                 "target_dest": target_dest
             }
 
-        # Check for directory traversal escaping root
-        parts = norm_dest.split("/")
-        depth = 0
-        for p in parts:
-            if p == "..":
-                depth -= 1
-                if depth < 0:
-                    return {
-                        "safe": False,
-                        "reason": "Symlink traversal escapes repository working boundary",
-                        "link_path": link_path,
-                        "target_dest": target_dest
-                    }
-            elif p and p != ".":
-                depth += 1
+        # Resolve relative destination from the directory containing the symlink
+        link_dir = os.path.dirname(norm_link)
+        combined = os.path.normpath(os.path.join(link_dir, norm_dest)).replace("\\", "/")
 
-        # Check for direct aliasing of .git internal paths
+        if combined == ".." or combined.startswith("../"):
+            return {
+                "safe": False,
+                "reason": "Symlink traversal escapes repository working boundary",
+                "link_path": link_path,
+                "target_dest": target_dest
+            }
+
+        # Check for direct or traversed aliasing of .git internal paths (CVE-2024-32002)
         for d in cls.DANGEROUS_TARGETS:
-            if norm_dest.startswith(d) or f"/{d}" in norm_dest:
+            if combined == d or combined.startswith(f"{d}/") or f"/{d}/" in f"/{combined}/" or norm_dest == d or norm_dest.startswith(f"{d}/"):
                 return {
                     "safe": False,
                     "reason": f"Forbidden target references Git metadata: {d}",
