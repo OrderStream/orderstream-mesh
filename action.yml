@@ -51,8 +51,10 @@ runs:
           orderstream-mesh list-pillars
         elif [ "${{ inputs.command }}" = "scan-workflow" ]; then
           orderstream-mesh scan-workflow --file "${{ inputs.workflow_file }}"
+        elif [ "${{ inputs.command }}" = "verify-case" ]; then
+          orderstream-mesh verify-case ${{ inputs.paths }}
         else
-          orderstream-mesh list-pillars
+          orderstream-mesh ${{ inputs.command }}
         fi
         echo "status=SUCCESS" >> $GITHUB_OUTPUT
 

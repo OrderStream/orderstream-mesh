@@ -95,6 +95,11 @@ class TestOrderStreamMesh24Solvers(unittest.TestCase):
         res_break = SATMergeSolver.resolve_dependency_conflict("tokio", "0.2.0", "1.0.0", "0.3.0")
         self.assertFalse(res_break["formally_verified"])
 
+        # 0.x compatible patch upgrade
+        res_zero = SATMergeSolver.resolve_dependency_conflict("axum-core", "0.4.0", "0.4.1", "0.4.2")
+        self.assertEqual(res_zero["resolved_version"], "0.4.2")
+        self.assertTrue(res_zero["formally_verified"])
+
     def test_07_contract_hypergraph(self):
         hypergraph = ContractHypergraph()
         hypergraph.register_provider_schema("BillingService", {"charge_id": "string", "amount_cents": "int"})
@@ -146,8 +151,9 @@ class TestOrderStreamMesh24Solvers(unittest.TestCase):
                 run: echo "$TITLE"
         """
         scan_safe = ActionContextTaintEngine.scan_workflow(safe_workflow)
-        # Scan passes when inside env or safe
-        self.assertTrue(isinstance(scan_safe["safe"], bool))
+        # Scan passes when inside env: mapping instead of run: execution context
+        self.assertTrue(scan_safe["safe"])
+        self.assertEqual(scan_safe["taint_findings_count"], 0)
 
     def test_10_cache_attestation(self):
         cache_engine = CacheAttestationEngine()

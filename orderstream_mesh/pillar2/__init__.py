@@ -93,13 +93,18 @@ class SATMergeSolver:
         va = cls.parse_semver(branch_a_ver)
         vb = cls.parse_semver(branch_b_ver)
 
-        # Semver compatibility rule: same major version allows upgrade to higher minor/patch
+        # Semver compatibility rule:
+        # 1. Non-zero major: same major version allows upgrade to higher minor/patch
+        # 2. Zero major (0.y.z): in semver, 0.y is breaking across minor versions, but identical 0.y allows patch upgrades
         if va[0] == vb[0] and va[0] > 0:
-            # Compatible non-zero major: pick latest
+            resolved = branch_a_ver if va >= vb else branch_b_ver
+            conflict_type = "CLEAN_COMPATIBLE_UPGRADE"
+        elif va[0] == 0 and vb[0] == 0 and va[1] == vb[1]:
+            # Compatible patch level bump on same 0.y minor
             resolved = branch_a_ver if va >= vb else branch_b_ver
             conflict_type = "CLEAN_COMPATIBLE_UPGRADE"
         else:
-            # Incompatible major versions or 0.x zero-ver breaking shifts
+            # Incompatible major versions or 0.x zero-ver minor breaking shifts
             resolved = branch_b_ver # default conservative fallback
             conflict_type = "MAJOR_VERSION_DIVERGENCE_WARNING"
 

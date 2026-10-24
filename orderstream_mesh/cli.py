@@ -110,8 +110,19 @@ def main(argv=None):
         print(json.dumps(res, indent=2))
 
     elif args.command == "fuzz-diff":
-        old_spec = json.loads(args.old_spec)
-        new_spec = json.loads(args.new_spec)
+        import os
+        if os.path.isfile(args.old_spec):
+            with open(args.old_spec, "r", encoding="utf-8") as f:
+                old_spec = json.load(f)
+        else:
+            old_spec = json.loads(args.old_spec)
+
+        if os.path.isfile(args.new_spec):
+            with open(args.new_spec, "r", encoding="utf-8") as f:
+                new_spec = json.load(f)
+        else:
+            new_spec = json.loads(args.new_spec)
+
         res = BehavioralFuzzSandbox.fuzz_differential(old_spec, new_spec)
         print(json.dumps(res, indent=2))
         sys.exit(0 if res.get("safe_to_automerge") else 1)

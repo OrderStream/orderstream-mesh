@@ -32,15 +32,35 @@ class ActionContextTaintEngine:
     def scan_workflow(cls, workflow_yaml_text: str) -> Dict[str, any]:
         findings = []
         lines = workflow_yaml_text.splitlines()
+        in_run_block = False
+        run_indent = 0
+
         for idx, line in enumerate(lines, 1):
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip())
+
+            # Track whether we are in a multi-line `run:` block
+            if stripped.startswith("run:"):
+                in_run_block = True
+                run_indent = indent
+            elif in_run_block and stripped and indent <= run_indent:
+                in_run_block = False
+
+            # Check if current line contains tainted expression
             for pattern in cls.TAINT_PATTERNS:
                 if pattern in line and "${{" in line:
-                    findings.append({
-                        "line": idx,
-                        "tainted_expression": line.strip(),
-                        "vulnerability": "Direct expression interpolation into execution context",
-                        "remediation": "Pass untrusted metadata via env: instead of inline string interpolation"
-                    })
+                    # Check context: is it in a `run:` command, or an inline `run:`?
+                    # In GitHub Actions, passing via env: is safe because the shell accesses it as an environment variable, not pre-interpolated code.
+                    is_run_context = in_run_block or stripped.startswith("run:") or ("run:" in stripped)
+                    is_env_context = stripped.startswith("env:") or (not is_run_context and ":" in stripped and not stripped.startswith("- run"))
+
+                    if is_run_context and not is_env_context:
+                        findings.append({
+                            "line": idx,
+                            "tainted_expression": stripped,
+                            "vulnerability": "Direct expression interpolation into execution context",
+                            "remediation": "Pass untrusted metadata via env: instead of inline string interpolation"
+                        })
         return {
             "safe": len(findings) == 0,
             "taint_findings_count": len(findings),
