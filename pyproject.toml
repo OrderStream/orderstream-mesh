@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orderstream-mesh"
-version = "1.0.0"
-description = "OrderStream Enterprise Engineering Mesh - 24 High-Performance Solvers across 6 Pillars for Monorepo, DevSecOps, and Protocol Infrastructure"
+version = "2.0.0"
+description = "OrderStream Enterprise Engineering Mesh - 100+ High-Performance Solvers across 10 Pillars for Monorepo, DevSecOps, and Protocol Infrastructure"
 authors = [{ name = "OrderStream", email = "healthdecoded77@gmail.com" }]
 license = { text = "Apache-2.0" }
 readme = "README.md"
