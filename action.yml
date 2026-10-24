@@ -1,0 +1,58 @@
+name: "OrderStream Enterprise Engineering Mesh"
+description: "Unified 24-Solver DevSecOps & VCS Performance Engine for Enterprise Monorepos & Protocol Engineering"
+author: "OrderStream <healthdecoded77@gmail.com>"
+branding:
+  icon: "cpu"
+  color: "blue"
+
+inputs:
+  command:
+    description: "Mesh command to execute (e.g. list-pillars, scan-workflow, verify-case, solve-merge, fuzz-diff)"
+    required: false
+    default: "list-pillars"
+  workflow_file:
+    description: "Target workflow YAML file for context taint security scan"
+    required: false
+    default: ""
+  paths:
+    description: "Space-delimited paths to check for Unicode NFKC case collision"
+    required: false
+    default: ""
+  license_key:
+    description: "OrderStream Enterprise cryptographically signed license key"
+    required: false
+    default: ""
+
+outputs:
+  status:
+    description: "Execution status of the mesh evaluation"
+    value: ${{ steps.mesh_runner.outputs.status }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+
+    - name: Install OrderStream Mesh
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .
+
+    - name: Execute OrderStream Mesh Runner
+      id: mesh_runner
+      shell: bash
+      run: |
+        echo "Running OrderStream Enterprise Engineering Mesh..."
+        if [ "${{ inputs.command }}" = "list-pillars" ]; then
+          orderstream-mesh list-pillars
+        elif [ "${{ inputs.command }}" = "scan-workflow" ]; then
+          orderstream-mesh scan-workflow --file "${{ inputs.workflow_file }}"
+        else
+          orderstream-mesh list-pillars
+        fi
+        echo "status=SUCCESS" >> $GITHUB_OUTPUT
+

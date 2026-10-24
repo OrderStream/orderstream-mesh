@@ -1,0 +1,2 @@
+[console_scripts]
+orderstream-mesh = orderstream_mesh.cli:main
