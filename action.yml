@@ -40,21 +40,29 @@ runs:
       shell: bash
       run: |
         python -m pip install --upgrade pip
-        pip install -e .
+        pip install -e "${{ github.action_path }}"
 
     - name: Execute OrderStream Mesh Runner
       id: mesh_runner
       shell: bash
+      env:
+        MESH_COMMAND: ${{ inputs.command }}
+        MESH_WORKFLOW_FILE: ${{ inputs.workflow_file }}
+        MESH_PATHS: ${{ inputs.paths }}
       run: |
         echo "Running OrderStream Enterprise Engineering Mesh..."
-        if [ "${{ inputs.command }}" = "list-pillars" ]; then
+        if [ "$MESH_COMMAND" = "list-pillars" ]; then
           orderstream-mesh list-pillars
-        elif [ "${{ inputs.command }}" = "scan-workflow" ]; then
-          orderstream-mesh scan-workflow --file "${{ inputs.workflow_file }}"
-        elif [ "${{ inputs.command }}" = "verify-case" ]; then
-          orderstream-mesh verify-case ${{ inputs.paths }}
+        elif [ "$MESH_COMMAND" = "scan-workflow" ]; then
+          orderstream-mesh scan-workflow --file "$MESH_WORKFLOW_FILE"
+        elif [ "$MESH_COMMAND" = "verify-case" ]; then
+          orderstream-mesh verify-case "$MESH_PATHS"
+        elif [ "$MESH_COMMAND" = "all" ] || [ -z "$MESH_COMMAND" ]; then
+          orderstream-mesh list-pillars
         else
-          orderstream-mesh ${{ inputs.command }}
+          echo "Unknown or unapproved command: $MESH_COMMAND"
+          exit 1
         fi
-        echo "status=SUCCESS" >> $GITHUB_OUTPUT
+        echo "status=SUCCESS" >> "$GITHUB_OUTPUT"
+
 
